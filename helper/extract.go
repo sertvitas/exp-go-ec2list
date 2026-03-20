@@ -2,14 +2,26 @@ package helper
 
 import "strings"
 
-// ExtractName returns the last part of an ARN
+// ExtractName returns the suffix after the final '/'.
+//
+// It returns the input unchanged when '/' is not present.
 func ExtractName(arn string) string {
-	parts := strings.Split(arn, "/")
-	return parts[len(parts)-1]
+	idx := strings.LastIndex(arn, "/")
+	if idx == -1 {
+		return arn
+	}
+
+	return arn[idx+1:]
 }
 
-// ExtractImageName returns the last part of a container image name
+// ExtractImageName returns the image name suffix after the final '/'.
+//
+// It keeps tags and digests intact (for example, repo/app:tag).
 func ExtractImageName(image string) string {
-	parts := strings.Split(image, "/")
-	return parts[len(parts)-1]
+	idx := strings.LastIndex(image, "/")
+	if idx == -1 {
+		return image
+	}
+
+	return image[idx+1:]
 }
