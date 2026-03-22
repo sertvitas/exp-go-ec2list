@@ -23,6 +23,8 @@ const (
 	excludedImageSubstring  = "nginx"
 )
 
+var excludedClusterNameSubstrings = []string{"gatling", "avdstatic", "mockonesign", "loadtest", "-zk", "-zoo"}
+
 func main() {
 	if len(os.Args) < 2 {
 		log.Fatal("usage: ec2list <partial-cluster-name>")
@@ -65,6 +67,7 @@ func main() {
 func listMatchingClusters(ctx context.Context, client *ecs.Client, partialClusterName string) ([]string, error) {
 	paginator := ecs.NewListClustersPaginator(client, &ecs.ListClustersInput{})
 	clusterArns := make([]string, 0)
+	partialClusterNameLower := strings.ToLower(partialClusterName)
 
 	for paginator.HasMorePages() {
 		output, err := paginator.NextPage(ctx)
@@ -73,7 +76,8 @@ func listMatchingClusters(ctx context.Context, client *ecs.Client, partialCluste
 		}
 
 		for _, clusterArn := range output.ClusterArns {
-			if strings.Contains(clusterArn, partialClusterName) {
+			clusterName := helper.ExtractName(clusterArn)
+			if strings.Contains(strings.ToLower(clusterName), partialClusterNameLower) && !isExcludedClusterName(clusterName) {
 				clusterArns = append(clusterArns, clusterArn)
 			}
 		}
@@ -235,6 +239,18 @@ func primaryOrFirstDeployment(deployments []types.Deployment) (types.Deployment,
 	}
 
 	return deployments[0], true
+}
+
+// isExcludedClusterName reports whether a cluster name matches exclude rules.
+func isExcludedClusterName(clusterName string) bool {
+	clusterNameLower := strings.ToLower(clusterName)
+	for _, excluded := range excludedClusterNameSubstrings {
+		if strings.Contains(clusterNameLower, excluded) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func renderTable(rows []table.Row) {
