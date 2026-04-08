@@ -20,6 +20,7 @@ const (
 	apiTimeout              = 30 * time.Second
 	describeServicesBatch   = 10
 	deploymentStatusPrimary = "PRIMARY"
+	deploymentStatusActive  = "ACTIVE"
 	excludedImageSubstring  = "nginx"
 )
 
@@ -111,30 +112,27 @@ func collectRows(ctx context.Context, client *ecs.Client, clusterArns []string) 
 		}
 
 		for _, service := range services {
-			deployment, ok := primaryOrFirstDeployment(service.Deployments)
-			if !ok {
-				continue
-			}
+			for _, deployment := range activeDeployments(service.Deployments) {
+				if deployment.TaskDefinition == nil || *deployment.TaskDefinition == "" {
+					warnings = append(warnings, fmt.Errorf("cluster %s service %s has no task definition", clusterArn, safeString(service.ServiceArn)))
+					continue
+				}
 
-			if deployment.TaskDefinition == nil || *deployment.TaskDefinition == "" {
-				warnings = append(warnings, fmt.Errorf("cluster %s service %s has no task definition", clusterArn, safeString(service.ServiceArn)))
-				continue
-			}
+				images, err := taskDefinitionImages(ctx, client, *deployment.TaskDefinition, imageCache)
+				if err != nil {
+					warnings = append(warnings, fmt.Errorf("describe task definition %s: %w", *deployment.TaskDefinition, err))
+					continue
+				}
 
-			images, err := taskDefinitionImages(ctx, client, *deployment.TaskDefinition, imageCache)
-			if err != nil {
-				warnings = append(warnings, fmt.Errorf("describe task definition %s: %w", *deployment.TaskDefinition, err))
-				continue
+				rows = append(rows, table.Row{
+					helper.ExtractName(clusterArn),
+					helper.ExtractName(*deployment.TaskDefinition),
+					deployment.DesiredCount,
+					deployment.PendingCount,
+					deployment.RunningCount,
+					strings.Join(images, ", "),
+				})
 			}
-
-			rows = append(rows, table.Row{
-				helper.ExtractName(clusterArn),
-				helper.ExtractName(*deployment.TaskDefinition),
-				deployment.DesiredCount,
-				deployment.PendingCount,
-				deployment.RunningCount,
-				strings.Join(images, ", "),
-			})
 		}
 	}
 
@@ -226,19 +224,38 @@ func taskDefinitionImages(ctx context.Context, client *ecs.Client, taskDefinitio
 	return images, nil
 }
 
-// primaryOrFirstDeployment prefers PRIMARY deployment and falls back to first.
-func primaryOrFirstDeployment(deployments []types.Deployment) (types.Deployment, bool) {
+// activeDeployments returns active deployments for the service.
+func activeDeployments(deployments []types.Deployment) []types.Deployment {
+	active := make([]types.Deployment, 0, len(deployments))
+
 	for _, deployment := range deployments {
-		if deployment.Status != nil && *deployment.Status == deploymentStatusPrimary {
-			return deployment, true
+		if isDeploymentActive(deployment) {
+			active = append(active, deployment)
 		}
 	}
 
-	if len(deployments) == 0 {
-		return types.Deployment{}, false
+	if len(active) > 0 {
+		return active
 	}
 
-	return deployments[0], true
+	if len(deployments) == 0 {
+		return nil
+	}
+
+	return []types.Deployment{deployments[0]}
+}
+
+// isDeploymentActive reports whether a deployment is actively serving/rolling.
+func isDeploymentActive(deployment types.Deployment) bool {
+	if deployment.RunningCount > 0 || deployment.PendingCount > 0 || deployment.DesiredCount > 0 {
+		return true
+	}
+
+	if deployment.Status == nil {
+		return false
+	}
+
+	return *deployment.Status == deploymentStatusPrimary || *deployment.Status == deploymentStatusActive
 }
 
 // isExcludedClusterName reports whether a cluster name matches exclude rules.

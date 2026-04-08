@@ -1,6 +1,8 @@
 module github.com/sertvitas/exp-go-ec2list
 
-go 1.21
+go 1.25
+
+toolchain go1.25.9
 
 require (
 	github.com/aws/aws-sdk-go-v2/config v1.27.16
